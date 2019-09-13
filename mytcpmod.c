@@ -126,7 +126,7 @@ static long mod_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
     case WR_MESSAGE:
       copy_from_user(&value ,(inet_message_t*) arg, sizeof(value));
       tx_buffer[inet_tx_idx] = value;
-      if ( inet_tx_idx < IN)
+      //if ( inet_tx_idx < IN)
       inet_tx_idx++;
       break;
     case RD_MESSAGE:
@@ -270,7 +270,6 @@ static void ksocket_start(void)
     ) < 0) )
   {
     printk(KERN_INFO MODULE_NAME": Could not bind to socket, error = %d\n", -err);
-    sock_release(kthread->sock_recv);
     return;
   }
 
@@ -304,7 +303,11 @@ static void ksocket_start(void)
     } else {
       printk(KERN_INFO MODULE_NAME ": accepted connection!\n");
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 17, 0)
+      new_socket->ops->getname(new_socket, &client_ip, 2);
+#else
       new_socket->ops->getname(new_socket, &client_ip, &client_ip_len, 2);
+#endif
 
       if ( client_ip.sa_family == AF_INET ) {
         printk(KERN_INFO MODULE_NAME ": CLIENT IS AF_INET!\n");
