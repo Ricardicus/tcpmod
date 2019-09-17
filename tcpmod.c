@@ -37,7 +37,7 @@ MODULE_LICENSE("Dual BSD/GPL");
 MODULE_AUTHOR("Rickard");
 MODULE_DESCRIPTION("TCP/IP module");
 
-#define MODULE_NAME "Rickards"
+#define MODULE_NAME "mytcpmod"
 
 static int major_number;
 
@@ -302,6 +302,8 @@ static void ksocket_start(void)
         printk(KERN_INFO MODULE_NAME ": Message nbr %d received.\n", inet_rx_idx);
         /* data processing */
 
+        sock_release(new_socket);
+
         break;
       }
 
@@ -311,9 +313,9 @@ static void ksocket_start(void)
 
   set_current_state(TASK_RUNNING);
 
-  sock_release(new_socket);
   sock_release(kthread->sock_recv);
 
+  kfree(new_socket);
   kfree(buf);
   kthread->running = 0;
 }
@@ -384,19 +386,23 @@ void cleanup_module(void)
 
   printk(KERN_INFO "Goodbye world 1.\n");
 
-  if ( kthread->running ) {
-    ret = kthread_stop(kthread->thread);
-    if(!ret) {
-      printk(KERN_INFO "kthread stopped");
+  if ( kthread != NULL ) {
+    if ( kthread->running ) {
+      ret = kthread_stop(kthread->thread);
+      if(!ret) {
+        printk(KERN_INFO "kthread stopped");
+      }
     }
+
+    // Free the memory of the threads
+    kfree(kthread);
   }
 
-  // Free the memory of the threads
-  kfree(kthread);
-
   // Free the memory of the buffers
-  kfree(rx_buffer);
-  kfree(tx_buffer);
+  if ( rx_buffer != NULL )
+    kfree(rx_buffer);
+  if ( tx_buffer != NULL )
+    kfree(tx_buffer);
 
   unregister_chrdev(major_number, MODULE_NAME);
 

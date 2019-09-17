@@ -13,8 +13,8 @@ all:
 clean:
 	make -C /lib/modules/$(shell uname -r)/build M=$(PWD) clean
 
-install:
-	@insmod $(mymodule).ko port=$(PORT) ip=$(IP)
+install: 
+	./util.sh $@ $(mymodule) $(PORT) $(IP)
 
 uninstall:
-	@rmmod $(mymodule)
+	./util.sh $@ $(mymodule)
