@@ -23,7 +23,11 @@ on I might add IOCTL support for acting as
 a client also.
 
 This is just me exploring the world of Linux
-a bit. 
+a bit.
+
+# Kernel 5.0.0 compatible
+
+This is the platform I use atm, but I switched from 4.16 recently. 
 
 # Install
 
