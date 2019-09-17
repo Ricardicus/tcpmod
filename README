@@ -20,11 +20,20 @@ a bit.
 
 # Install
 
+```bash
+# Build the kernel module files
 make
+# Install the module
 sudo make install
+```
 
 # Uninstall
 
+```bash
+# Uninstall the module
 sudo make uninstall
+# Remove files not used anymore
 make clean
+```
+
 
