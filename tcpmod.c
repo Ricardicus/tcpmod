@@ -11,42 +11,22 @@
 #include <linux/ip.h>
 #include <linux/slab.h>
 
+#include "ioctls.h"
+#include "defines.h"
+
 MODULE_LICENSE("GPL");
-
-#define RX_BUFFER_SIZE    200
-#define TX_BUFFER_SIZE    200
-
-#define MAX(x,y) ( ((x) > (y)) ? (x) : (y) )
-#define MIN(x,y) ( ((x) < (y)) ? (x) : (y) )
-
-typedef struct inet_message {
-  unsigned long ip;
-  int port;
-  char data[24];
-} inet_message_t;
-
-struct kthread_t
-{
-        struct task_struct *thread;
-        struct socket *sock_recv;
-        struct sockaddr_in addr;
-        int running;
-};
-
-#define WR_MESSAGE _IOW('a','a',inet_message_t*)
-#define RD_MESSAGE _IOR('a','b',inet_message_t*)
 
 static struct kthread_t *kthread = NULL;
 
 static char *ip = NULL;
 static int port;
 
-static spinlock_t inet_mod_lock;
-static int inet_rx_idx = 0;
-static int inet_tx_idx = 0;
+spinlock_t inet_mod_lock;
+unsigned int inet_rx_idx = 0;
+unsigned int inet_tx_idx = 0;
 
-static inet_message_t * rx_buffer;
-static inet_message_t * tx_buffer;
+inet_message_t * rx_buffer;
+inet_message_t * tx_buffer;
 
 module_param(port, int,S_IRUSR|S_IWUSR);
 module_param(ip, charp, S_IRUSR|S_IWUSR);
@@ -114,40 +94,6 @@ int mod_release(struct inode *node, struct file *f)
   printk(KERN_INFO "%s\n", __func__);
   return 0;
 }
-
-
-static long mod_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
-{
-  inet_message_t value;
-  unsigned long flags;
-
-  spin_lock_irqsave(&inet_mod_lock, flags);
-  switch(cmd) {
-    case WR_MESSAGE:
-      copy_from_user(&value ,(inet_message_t*) arg, sizeof(value));
-      tx_buffer[inet_tx_idx] = value;
-      //if ( inet_tx_idx < IN)
-      inet_tx_idx++;
-      break;
-    case RD_MESSAGE:
-      value = rx_buffer[inet_rx_idx];
-      if ( inet_rx_idx > 0 )
-        inet_rx_idx--;
-      copy_to_user((inet_message_t*) arg, &value, sizeof(value));
-      break;
-    default:
-      break;
-  }
-  spin_unlock_irqrestore(&inet_mod_lock, flags);
-  return 0;
-}
-
-/*
-ssize_t (*read) (struct file *, char __user *, size_t, loff_t *);
-ssize_t (*write) (struct file *, const char __user *, size_t, loff_t *);
-int (*open) (struct inode *, struct file *);
-int (*release) (struct inode *, struct file *);
-*/
 
 struct file_operations fops = {
    .read =  mod_read,
@@ -304,7 +250,8 @@ static void ksocket_start(void)
       printk(KERN_INFO MODULE_NAME ": accepted connection!\n");
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 17, 0)
-      new_socket->ops->getname(new_socket, &client_ip, 2);
+      // lenght is returned from now on instead
+      client_ip_len = new_socket->ops->getname(new_socket, &client_ip, 2);
 #else
       new_socket->ops->getname(new_socket, &client_ip, &client_ip_len, 2);
 #endif
@@ -340,7 +287,7 @@ static void ksocket_start(void)
       {
         unsigned long flags;
 
-        memcpy(new_message.data, buf, MIN(bufsize, 24));
+        memcpy(new_message.data, buf, MIN(bufsize, MESSAGE_DATA_BUF));
 
         // Add new data to rx_buffer using the spin lock
         spin_lock_irqsave(&inet_mod_lock, flags);
