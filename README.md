@@ -1,9 +1,7 @@
 This is a module I am making just to get a bit more
 exeprience of Linux kernel space development. 
 I have made a server that runs in kernel mode.
-For now this server only registers some incoming
-bytes and makes them readable by all processes.
-For now there is no output from this server, only input.
+For now this server only works as an echo server.
 
 
 You can read the latest incoming message
