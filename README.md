@@ -1,13 +1,20 @@
-This is a module made to get a bit more
-exeprience of linux kernel development. 
-
+This is a module I am making just to get a bit more
+exeprience of Linux kernel space development. 
 I have made a server that runs in kernel mode.
+For now this server only registers some incoming
+bytes and makes them readable by all processes.
+For now there is no output from this server, only input.
+
 
 You can read the latest incoming message
 by the character device driver node created 
 as "tcp[PORTNUMBER]". 
+
+
 Only 64 bytes from incoming messages are 
-stored to be able to be read. 
+stored to be able to be read. You don't want
+to occupy too much memory in kernel space.
+
 
 There are some IOCTLs one can use also.
 
