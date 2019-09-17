@@ -1,0 +1,10 @@
+# Products from the build
+*.ko
+*.symvers
+*.order
+*.o
+*.mod.c
+*.cmd
+
+# Tmp directory
+.tmp_versions
