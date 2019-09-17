@@ -1,9 +1,9 @@
-This is a module I am making just to get a bit more
-exeprience of Linux kernel space development. 
-I have made a server that runs in kernel mode.
-For now this server only registers some incoming
-bytes and makes them readable by all processes.
-For now there is no output from this server, only input.
+# Kernel Server
+
+This is a module I am making just to get more
+experience out of Linux kernel space development. 
+I have made a server that runs in kernel space.
+For now this server only works as an echo server.
 
 
 You can read the latest incoming message
@@ -23,7 +23,11 @@ on I might add IOCTL support for acting as
 a client also.
 
 This is just me exploring the world of Linux
-a bit. 
+a bit.
+
+# Kernel 5.0.0 compatible
+
+This is the platform I use atm, but I switched from 4.16 recently. 
 
 # Install
 
