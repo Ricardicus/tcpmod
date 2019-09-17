@@ -18,6 +18,7 @@
 typedef struct inet_message {
   unsigned long ip;
   int port;
+  struct timespec time;
   unsigned int len;
   char data[MESSAGE_DATA_BUF];
 } inet_message_t;

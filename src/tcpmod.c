@@ -37,6 +37,7 @@ module_param(ip, charp, S_IRUSR|S_IWUSR);
 static int major_number;
 
 static DECLARE_WAIT_QUEUE_HEAD(read_queue);
+static DECLARE_WAIT_QUEUE_HEAD(poll_queue);
 
 ssize_t mod_read (struct file *f, char *user, size_t size, loff_t *offset)
 {
@@ -101,9 +102,13 @@ ssize_t mod_read (struct file *f, char *user, size_t size, loff_t *offset)
 
 static unsigned int mod_poll(struct file *file, poll_table *wait)
 {
-    poll_wait(file, &read_queue, wait);
-    if (inet_rx_idx > 0)
-        return POLLIN | POLLRDNORM;
+    printk(KERN_INFO "mod_poll called\n");
+    poll_wait(file, &poll_queue, wait);
+    if (inet_rx_idx > 0) {
+      printk(KERN_INFO "mod_poll returning with POLLIN | POLLRDNORM!\n");
+      return POLLIN | POLLRDNORM;
+    }
+    printk(KERN_INFO "mod_poll returning with 0\n");
     return 0;
 }
 
@@ -284,7 +289,6 @@ static void ksocket_start(void)
   }
 
   kthread->mode |= RUNNING;
-  kthread->mode |= ECHO_SERVER;
 
   /* create a socket */
   if ( ( (err = sock_create(PF_INET, SOCK_STREAM, IPPROTO_TCP, &kthread->sock_recv)) < 0) )
@@ -335,8 +339,6 @@ static void ksocket_start(void)
     if ( err < 0 ) {
       printk(KERN_INFO MODULE_NAME ": Failed to accept (%d)\n", err);
     } else {
-      printk(KERN_INFO MODULE_NAME ": accepted connection!\n");
-
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 17, 0)
       // lenght is returned from now on instead
       client_ip_len = new_socket->ops->getname(new_socket, &client_ip, 2);
@@ -375,8 +377,12 @@ static void ksocket_start(void)
       {
         unsigned long flags;
 
-        new_message.len = MIN(size, MESSAGE_DATA_BUF);
+        // Get current time
+        getnstimeofday(&new_message.time);
+
+        new_message.len = MIN(size, MESSAGE_DATA_BUF-1);
         memcpy(new_message.data, buf, new_message.len);
+        new_message.data[new_message.len] = 0;
 
         // Add new data to rx_buffer using the spin lock
         spin_lock_irqsave(&inet_mod_rx_queue_lock, flags);
@@ -386,6 +392,7 @@ static void ksocket_start(void)
           inet_rx_idx++;
 
           wake_up_interruptible(&read_queue);
+          wake_up(&poll_queue);
         }
 
         spin_unlock_irqrestore(&inet_mod_rx_queue_lock, flags);
@@ -455,6 +462,9 @@ int init_module(void)
   }
 
   memset(kthread, 0, sizeof(struct kthread_t));
+
+  /* Configure kthread to be an echo server */
+  kthread->mode |= ECHO_SERVER;
 
   /* start kernel thread */
   kthread->thread = kthread_run((void *)ksocket_start, NULL, MODULE_NAME);

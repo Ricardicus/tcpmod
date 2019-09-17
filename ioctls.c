@@ -21,7 +21,7 @@ long mod_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
       break;
     case RD_MESSAGE:
       spin_lock_irqsave(&inet_mod_rx_queue_lock, flags);
-      value = rx_buffer[inet_rx_idx-1];
+      value = rx_buffer[inet_rx_idx];
       if ( inet_rx_idx > 0 )
         inet_rx_idx--;
       copy_to_user((inet_message_t*) arg, &value, sizeof(value));
@@ -29,9 +29,7 @@ long mod_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
       break;
     case PEEK_MESSAGE:
       spin_lock_irqsave(&inet_mod_rx_queue_lock, flags);
-      value = (inet_message_t) {0};
-      if ( inet_rx_idx > 0 )
-        value = rx_buffer[inet_rx_idx-1];
+      value = rx_buffer[inet_rx_idx];
       copy_to_user((inet_message_t*) arg, &value, sizeof(value));
       spin_unlock_irqrestore(&inet_mod_rx_queue_lock, flags);
     case INCOMING_MESSAGES:
