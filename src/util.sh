@@ -20,8 +20,13 @@ if [ "$ACTION" == "install" ]; then
 	PORT="8080"
 	MODULE=""
 
-	if [ -z "$2" ] || [ ! -f "$2.ko" ]; then
-		echo "Missing valid .ko file" >&2 
+	if [ -z "$2" ]; then
+		echo "Missing valid .ko file as input" >&2
+		exit 1
+	fi
+
+	if [ ! -f "$2.ko" ]; then
+		echo "Must create $2.ko before installing. Try 'make' then 'make install'" >&2
 		exit 1
 	fi
 
@@ -42,7 +47,7 @@ if [ "$ACTION" == "install" ]; then
 
 		if [ ! -z "$MAJOR" ]; then
 
-			mknod $MODULE c $MAJOR 0
+			mknod ../tcp$PORT c $MAJOR 0
 
 		fi
 
@@ -58,7 +63,7 @@ elif [ "$ACTION" == "uninstall" ]; then
 	MODULE="$2"
 
 	rmmod $MODULE
-	rm $MODULE
+	rm -f ../tcp$PORT
 
 else 
 	echo "Unknown action" >&2

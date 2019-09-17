@@ -54,7 +54,7 @@ ssize_t mod_read (struct file *f, char *user, size_t size, loff_t *offset)
     // Wait until data is available
     int wait_ret;
 
-    wait_ret = wait_event_interruptible(read_queue, (inet_rx_idx == 0));
+    wait_ret = wait_event_interruptible(read_queue, (inet_rx_idx > 0));
 
     if ( wait_ret != 0 )
       return wait_ret;
