@@ -44,7 +44,7 @@ ssize_t mod_read (struct file *f, char *user, size_t size, loff_t *offset)
   int major_nbr;
   int minor_nbr;
   char *buf;
-  unsigned int msg_len;
+  unsigned int len;
   unsigned long bytes_out;
 
   if ( size == 0 || user == NULL )
@@ -66,9 +66,9 @@ ssize_t mod_read (struct file *f, char *user, size_t size, loff_t *offset)
   }
 
   buf = rx_buffer[inet_rx_idx-1].data;
-  msg_len = rx_buffer[inet_rx_idx-1].msg_len;
+  len = rx_buffer[inet_rx_idx-1].len;
 
-  bytes_out = MIN(size, msg_len - *offset);
+  bytes_out = MIN(size, len - *offset);
 
   if ( bytes_out > 0 )
     copy_to_user(user, &buf[*offset], bytes_out);
@@ -91,7 +91,7 @@ ssize_t mod_read (struct file *f, char *user, size_t size, loff_t *offset)
 
   *offset += bytes_out;
 
-  if ( *offset >= msg_len ) {
+  if ( *offset >= len ) {
     // Now the rx_queue can be edited
     spin_unlock_irqrestore(&inet_mod_rx_queue_lock, spin_lock_flags);
   }
@@ -165,7 +165,6 @@ static int ksocket_receive(struct socket* sock, struct sockaddr_in* addr, unsign
 
   msg.msg_control = NULL;
 
-  printk(KERN_INFO MODULE_NAME "(1)\n");
   oldfs = get_fs();
   set_fs(KERNEL_DS);
 
@@ -190,12 +189,69 @@ static int ksocket_receive(struct socket* sock, struct sockaddr_in* addr, unsign
   read_bytes = sock_recvmsg(sock, &msg, 0);
 
   set_fs(oldfs);
-  printk(KERN_INFO MODULE_NAME "(2)\n");
+
   printk(KERN_INFO MODULE_NAME " read_bytes: %d\n", read_bytes);
 
   kfree(cbuf);
 
   return read_bytes;
+}
+
+static int ksocket_send(struct socket* sock, struct sockaddr_in* addr, unsigned char* buf, int len)
+{
+  mm_segment_t oldfs;
+  int sent_bytes = 0;
+
+  unsigned long nr_segments = 1;
+  size_t count = len;
+  char *cbuf;
+  struct msghdr __user msg = {};
+  struct iovec iov = {};
+
+  if (sock->sk==NULL) return 0;
+
+  cbuf = kmalloc(500, GFP_USER);
+  if ( cbuf < 0 ) {
+    printk(KERN_ERR MODULE_NAME " failed to alloc mem for cbuf\n");
+  }
+
+  iov.iov_base = buf;
+  iov.iov_len = len;
+
+  msg.msg_flags = 0;
+  msg.msg_name = addr;
+  msg.msg_namelen  = sizeof(struct sockaddr_in);
+  msg.msg_control = cbuf;
+  msg.msg_controllen = 500;
+
+  iov_iter_init(&msg.msg_iter, READ, &iov, nr_segments, count);
+
+  msg.msg_control = NULL;
+
+  oldfs = get_fs();
+  set_fs(KERNEL_DS);
+
+  if ( sock == NULL ) {
+    printk(KERN_INFO MODULE_NAME ": Error, sock == NULL\n");
+    set_fs(oldfs);
+    return -1;
+  }
+
+  if ( sock->ops == NULL ) {
+    printk(KERN_INFO MODULE_NAME ": Error, sock->ops == NULL\n");
+    set_fs(oldfs);
+    return -1;
+  }
+
+  sent_bytes = sock_sendmsg(sock, &msg);
+
+  set_fs(oldfs);
+
+  printk(KERN_INFO MODULE_NAME " sent_bytes: %d\n", sent_bytes);
+
+  kfree(cbuf);
+
+  return sent_bytes;
 }
 
 static void ksocket_start(void)
@@ -227,7 +283,8 @@ static void ksocket_start(void)
     return;
   }
 
-  kthread->running = 1;
+  kthread->mode |= RUNNING;
+  kthread->mode |= ECHO_SERVER;
 
   /* create a socket */
   if ( ( (err = sock_create(PF_INET, SOCK_STREAM, IPPROTO_TCP, &kthread->sock_recv)) < 0) )
@@ -318,8 +375,8 @@ static void ksocket_start(void)
       {
         unsigned long flags;
 
-        new_message.msg_len = MIN(bufsize, MESSAGE_DATA_BUF);
-        memcpy(new_message.data, buf, new_message.msg_len);
+        new_message.len = MIN(size, MESSAGE_DATA_BUF);
+        memcpy(new_message.data, buf, new_message.len);
 
         // Add new data to rx_buffer using the spin lock
         spin_lock_irqsave(&inet_mod_rx_queue_lock, flags);
@@ -336,9 +393,13 @@ static void ksocket_start(void)
         printk(KERN_INFO MODULE_NAME ": Message nbr %d received.\n", inet_rx_idx);
         /* data processing */
 
+        if ( kthread->mode & ECHO_SERVER ) {
+          // Echo the incoming message
+          ksocket_send(new_socket, &kthread->addr, buf, MIN(size, MESSAGE_DATA_BUF));
+        }
+
         sock_release(new_socket);
 
-        break;
       }
 
     }
@@ -351,7 +412,7 @@ static void ksocket_start(void)
 
   kfree(new_socket);
   kfree(buf);
-  kthread->running = 0;
+  kthread->mode &= ~RUNNING;
 }
 
 int init_module(void)
@@ -421,7 +482,7 @@ void cleanup_module(void)
   printk(KERN_INFO "Goodbye world 1.\n");
 
   if ( kthread != NULL ) {
-    if ( kthread->running ) {
+    if ( kthread->mode & RUNNING ) {
       ret = kthread_stop(kthread->thread);
       if(!ret) {
         printk(KERN_INFO "kthread stopped");
