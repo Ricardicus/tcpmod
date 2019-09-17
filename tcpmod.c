@@ -10,55 +10,71 @@
 #include <linux/in.h>
 #include <linux/ip.h>
 #include <linux/slab.h>
+#include <linux/poll.h>
 
 #include "ioctls.h"
 #include "defines.h"
 
 MODULE_LICENSE("GPL");
+MODULE_LICENSE("Dual BSD/GPL");
+MODULE_AUTHOR("Rickard");
+MODULE_DESCRIPTION("TCP/IP module");
 
-static struct kthread_t *kthread = NULL;
-
-static char *ip = NULL;
-static int port;
-
-spinlock_t inet_mod_lock;
+spinlock_t inet_mod_rx_queue_lock;
 unsigned int inet_rx_idx = 0;
 unsigned int inet_tx_idx = 0;
 
 inet_message_t * rx_buffer;
 inet_message_t * tx_buffer;
 
+static struct kthread_t *kthread = NULL;
+static char *ip = NULL;
+static int port;
+
 module_param(port, int,S_IRUSR|S_IWUSR);
 module_param(ip, charp, S_IRUSR|S_IWUSR);
 
-//#define _BSD_SOURCE
-
-MODULE_LICENSE("Dual BSD/GPL");
-MODULE_AUTHOR("Rickard");
-MODULE_DESCRIPTION("TCP/IP module");
-
-#define MODULE_NAME "mytcpmod"
-
 static int major_number;
+
+static DECLARE_WAIT_QUEUE_HEAD(read_queue);
 
 ssize_t mod_read (struct file *f, char *user, size_t size, loff_t *offset)
 {
-  static char buffer[15] = {'H', 'e', 'l', 'l', 'o', ',', ' ', 'w', 'o', 'r', 'l', 'd', '!', '\n', 0};
-  size_t i = 0;
+  static unsigned long spin_lock_flags;
   int major_nbr;
   int minor_nbr;
+  char *buf;
+  unsigned int msg_len;
+  unsigned long bytes_out;
 
   if ( size == 0 || user == NULL )
     return -EINVAL;
 
-  while ( (i+*offset) < size && (i+*offset) < sizeof(buffer) ) {
-    user[i] = buffer[i];
-    ++i;
+  if ( inet_rx_idx == 0 ) {
+    // Wait until data is available
+    int wait_ret;
+
+    wait_ret = wait_event_interruptible(read_queue, (inet_rx_idx == 0));
+
+    if ( wait_ret != 0 )
+      return wait_ret;
   }
 
   if ( *offset == 0 ) {
-    // Learn stuff. Print stuff.
+    // Make sure there is no interrupts now
+    spin_lock_irqsave(&inet_mod_rx_queue_lock, spin_lock_flags);
+  }
 
+  buf = rx_buffer[inet_rx_idx-1].data;
+  msg_len = rx_buffer[inet_rx_idx-1].msg_len;
+
+  bytes_out = MIN(size, msg_len - *offset);
+
+  if ( bytes_out > 0 )
+    copy_to_user(user, &buf[*offset], bytes_out);
+
+  if ( *offset == 0 ) {
+    // Learn stuff. Print stuff.
     major_nbr = imajor(f->f_inode);
     minor_nbr = iminor(f->f_inode);
 
@@ -73,8 +89,22 @@ ssize_t mod_read (struct file *f, char *user, size_t size, loff_t *offset)
     printk(KERN_INFO "minor: %u\n", minor_nbr);
   }
 
-  *offset += i;
-  return i;
+  *offset += bytes_out;
+
+  if ( *offset >= msg_len ) {
+    // Now the rx_queue can be edited
+    spin_unlock_irqrestore(&inet_mod_rx_queue_lock, spin_lock_flags);
+  }
+
+  return bytes_out;
+}
+
+static unsigned int mod_poll(struct file *file, poll_table *wait)
+{
+    poll_wait(file, &read_queue, wait);
+    if (inet_rx_idx > 0)
+        return POLLIN | POLLRDNORM;
+    return 0;
 }
 
 ssize_t mod_write (struct file *f, const char *user, size_t size, loff_t *offset)
@@ -100,7 +130,8 @@ struct file_operations fops = {
    .write = mod_write,
    .open = mod_open,
    .release = mod_release,
-   .unlocked_ioctl = mod_ioctl
+   .unlocked_ioctl = mod_ioctl,
+   .poll = mod_poll,
 };
 
 static int ksocket_receive(struct socket* sock, struct sockaddr_in* addr, unsigned char* buf, int len)
@@ -287,17 +318,20 @@ static void ksocket_start(void)
       {
         unsigned long flags;
 
-        memcpy(new_message.data, buf, MIN(bufsize, MESSAGE_DATA_BUF));
+        new_message.msg_len = MIN(bufsize, MESSAGE_DATA_BUF);
+        memcpy(new_message.data, buf, new_message.msg_len);
 
         // Add new data to rx_buffer using the spin lock
-        spin_lock_irqsave(&inet_mod_lock, flags);
+        spin_lock_irqsave(&inet_mod_rx_queue_lock, flags);
 
         if ( inet_rx_idx < RX_BUFFER_SIZE ) {
           rx_buffer[inet_rx_idx] = new_message;
           inet_rx_idx++;
+
+          wake_up_interruptible(&read_queue);
         }
 
-        spin_unlock_irqrestore(&inet_mod_lock, flags);
+        spin_unlock_irqrestore(&inet_mod_rx_queue_lock, flags);
 
         printk(KERN_INFO MODULE_NAME ": Message nbr %d received.\n", inet_rx_idx);
         /* data processing */
@@ -329,7 +363,6 @@ int init_module(void)
 
   printk(KERN_INFO "%s", __func__);
   printk(KERN_INFO "Major number assigned: %d\n", major_number);
-
   printk(KERN_INFO "port: %d, ip: %s\n", port, ip);
 
   /* Allocate kernel thread */
@@ -373,7 +406,8 @@ int init_module(void)
     return -ENOMEM;
   }
 
-  spin_lock_init(&inet_mod_lock);
+  spin_lock_init(&inet_mod_rx_queue_lock);
+
   /*
    * A non 0 return means init_module failed; module can't be loaded.
    */

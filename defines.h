@@ -1,6 +1,8 @@
 #ifndef TCPMOD_DEFS_H
 #define TCPMOD_DEFS_H
 
+#define MODULE_NAME       "mytcpmod"
+
 #define RX_BUFFER_SIZE    50
 #define TX_BUFFER_SIZE    50
 
@@ -12,6 +14,7 @@
 typedef struct inet_message {
   unsigned long ip;
   int port;
+  unsigned int msg_len;
   char data[MESSAGE_DATA_BUF];
 } inet_message_t;
 
