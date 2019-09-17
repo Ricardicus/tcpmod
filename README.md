@@ -1,7 +1,7 @@
 # Kernel Server
 
-This is a module I am making just to get a bit more
-exeprience of Linux kernel space development. 
+This is a module I am making just to get more
+experience out of Linux kernel space development. 
 I have made a server that runs in kernel space.
 For now this server only works as an echo server.
 
