@@ -47,6 +47,7 @@ if [ "$ACTION" == "install" ]; then
 
 		if [ ! -z "$MAJOR" ]; then
 
+			rm -f ../tcp$PORT
 			mknod ../tcp$PORT c $MAJOR 0
 			chmod a+rw ../tcp$PORT
 
