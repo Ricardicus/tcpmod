@@ -27,7 +27,7 @@ unsigned int inet_tx_idx = 0;
 inet_message_t * rx_buffer;
 inet_message_t * tx_buffer;
 
-static struct kthread_t *kthread = NULL;
+static struct kthread_t *kthread_server = NULL;
 static char *ip = NULL;
 static int port;
 
@@ -102,13 +102,10 @@ ssize_t mod_read (struct file *f, char *user, size_t size, loff_t *offset)
 
 static unsigned int mod_poll(struct file *file, poll_table *wait)
 {
-    printk(KERN_INFO "mod_poll called\n");
     poll_wait(file, &poll_queue, wait);
     if (inet_rx_idx > 0) {
-      printk(KERN_INFO "mod_poll returning with POLLIN | POLLRDNORM!\n");
       return POLLIN | POLLRDNORM;
     }
-    printk(KERN_INFO "mod_poll returning with 0\n");
     return 0;
 }
 
@@ -259,7 +256,7 @@ static int ksocket_send(struct socket* sock, struct sockaddr_in* addr, unsigned 
   return sent_bytes;
 }
 
-static void ksocket_start(void)
+static void server(void)
 {
   int err;
   int size;
@@ -288,23 +285,23 @@ static void ksocket_start(void)
     return;
   }
 
-  kthread->mode |= RUNNING;
+  kthread_server->mode |= RUNNING;
 
   /* create a socket */
-  if ( ( (err = sock_create(PF_INET, SOCK_STREAM, IPPROTO_TCP, &kthread->sock_recv)) < 0) )
+  if ( ( (err = sock_create(PF_INET, SOCK_STREAM, IPPROTO_TCP, &kthread_server->sock_recv)) < 0) )
   {
     printk(KERN_INFO MODULE_NAME ": Could not create IPPROTO_TCP socket, error = %d\n", -err);
     return;
   }
 
-  memset(&kthread->addr, 0, sizeof(struct sockaddr));
+  memset(&kthread_server->addr, 0, sizeof(struct sockaddr));
 
-  kthread->addr.sin_family           = AF_INET;
-  kthread->addr.sin_addr.s_addr      = htonl(INADDR_ANY);
-  kthread->addr.sin_port             = htons(port);
+  kthread_server->addr.sin_family           = AF_INET;
+  kthread_server->addr.sin_addr.s_addr      = htonl(INADDR_ANY);
+  kthread_server->addr.sin_port             = htons(port);
 
-  if ( ( (err = kthread->sock_recv->ops->bind(kthread->sock_recv, 
-    (struct sockaddr *)&kthread->addr, sizeof(struct sockaddr) ) 
+  if ( ( (err = kthread_server->sock_recv->ops->bind(kthread_server->sock_recv, 
+    (struct sockaddr *)&kthread_server->addr, sizeof(struct sockaddr) ) 
     ) < 0) )
   {
     printk(KERN_INFO MODULE_NAME": Could not bind to socket, error = %d\n", -err);
@@ -313,10 +310,10 @@ static void ksocket_start(void)
 
   set_current_state(TASK_INTERRUPTIBLE);
 
-  if ( ( (err = kthread->sock_recv->ops->listen(kthread->sock_recv, 5) ) < 0) )
+  if ( ( (err = kthread_server->sock_recv->ops->listen(kthread_server->sock_recv, 5) ) < 0) )
   {
     printk(KERN_INFO MODULE_NAME ": Could not listen to socket, error = %d\n", -err);
-    sock_release(kthread->sock_recv);
+    sock_release(kthread_server->sock_recv);
     return;
   }
 
@@ -330,7 +327,7 @@ static void ksocket_start(void)
     int client_ip_len = sizeof(struct sockaddr);
     inet_message_t new_message;
 
-    err = kernel_accept(kthread->sock_recv, &new_socket, O_NONBLOCK);
+    err = kernel_accept(kthread_server->sock_recv, &new_socket, O_NONBLOCK);
 
     if ( err == -EAGAIN ) {
       continue;
@@ -367,7 +364,7 @@ static void ksocket_start(void)
       }
 
       memset(buf, 0, bufsize);
-      size = ksocket_receive(new_socket, &kthread->addr, buf, bufsize);
+      size = ksocket_receive(new_socket, &kthread_server->addr, buf, bufsize);
 
       if (size < 0) {
         printk(KERN_INFO MODULE_NAME ": error getting stream, sock_recvmsg error = %d\n", size);
@@ -400,9 +397,9 @@ static void ksocket_start(void)
         printk(KERN_INFO MODULE_NAME ": Message nbr %d received.\n", inet_rx_idx);
         /* data processing */
 
-        if ( kthread->mode & ECHO_SERVER ) {
+        if ( kthread_server->mode & ECHO_SERVER ) {
           // Echo the incoming message
-          ksocket_send(new_socket, &kthread->addr, buf, MIN(size, MESSAGE_DATA_BUF));
+          ksocket_send(new_socket, &kthread_server->addr, buf, MIN(size, MESSAGE_DATA_BUF));
         }
 
         sock_release(new_socket);
@@ -415,11 +412,11 @@ static void ksocket_start(void)
 
   set_current_state(TASK_RUNNING);
 
-  sock_release(kthread->sock_recv);
+  sock_release(kthread_server->sock_recv);
 
   kfree(new_socket);
   kfree(buf);
-  kthread->mode &= ~RUNNING;
+  kthread_server->mode &= ~RUNNING;
 }
 
 int init_module(void)
@@ -434,9 +431,9 @@ int init_module(void)
   printk(KERN_INFO "port: %d, ip: %s\n", port, ip);
 
   /* Allocate kernel thread */
-  kthread = kmalloc(sizeof(struct kthread_t), GFP_KERNEL);
+  kthread_server = kmalloc(sizeof(struct kthread_t), GFP_KERNEL);
 
-  if ( kthread < 0 ) {
+  if ( kthread_server < 0 ) {
     printk(KERN_ERR MODULE_NAME ": Failed to allocate space for kthread. Will quit.");
     return -ENOMEM;
   }
@@ -447,7 +444,7 @@ int init_module(void)
   if ( rx_buffer < 0 ) {
     printk(KERN_ERR MODULE_NAME ": Failed to allocate space for rx buffer. Will quit.");
 
-    kfree(kthread);
+    kfree(kthread_server);
     return -ENOMEM;
   }
 
@@ -457,23 +454,23 @@ int init_module(void)
     printk(KERN_ERR MODULE_NAME ": Failed to allocate space for tx buffer. Will quit.");
     
     kfree(rx_buffer);
-    kfree(kthread);
+    kfree(kthread_server);
     return -ENOMEM;
   }
 
-  memset(kthread, 0, sizeof(struct kthread_t));
+  memset(kthread_server, 0, sizeof(struct kthread_t));
 
   /* Configure kthread to be an echo server */
-  kthread->mode |= ECHO_SERVER;
+  kthread_server->mode |= ECHO_SERVER;
 
   /* start kernel thread */
-  kthread->thread = kthread_run((void *)ksocket_start, NULL, MODULE_NAME);
+  kthread_server->thread = kthread_run((void *)server, NULL, MODULE_NAME);
 
-  if (IS_ERR(kthread->thread)) 
+  if (IS_ERR(kthread_server->thread)) 
   {
     printk(KERN_INFO MODULE_NAME ": unable to start kernel thread\n");
-    kfree(kthread);
-    kthread = NULL;
+    kfree(kthread_server);
+    kthread_server = NULL;
     return -ENOMEM;
   }
 
@@ -491,16 +488,16 @@ void cleanup_module(void)
 
   printk(KERN_INFO "Goodbye world 1.\n");
 
-  if ( kthread != NULL ) {
-    if ( kthread->mode & RUNNING ) {
-      ret = kthread_stop(kthread->thread);
+  if ( kthread_server != NULL ) {
+    if ( kthread_server->mode & RUNNING ) {
+      ret = kthread_stop(kthread_server->thread);
       if(!ret) {
         printk(KERN_INFO "kthread stopped");
       }
     }
 
     // Free the memory of the threads
-    kfree(kthread);
+    kfree(kthread_server);
   }
 
   // Free the memory of the buffers
