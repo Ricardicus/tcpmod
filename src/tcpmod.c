@@ -28,10 +28,11 @@ inet_message_t * rx_buffer;
 inet_message_t * tx_buffer;
 
 static struct kthread_t *kthread_server = NULL;
+static struct kthread_t *kthread_client = NULL;
 static char *ip = NULL;
 static int port;
 
-module_param(port, int,S_IRUSR|S_IWUSR);
+module_param(port, int, S_IRUSR|S_IWUSR);
 module_param(ip, charp, S_IRUSR|S_IWUSR);
 
 static int major_number;
@@ -117,13 +118,11 @@ ssize_t mod_write (struct file *f, const char *user, size_t size, loff_t *offset
 
 int mod_open(struct inode *node, struct file *f)
 {
-  printk(KERN_INFO "%s\n", __func__);
   return 0;
 }
 
 int mod_release(struct inode *node, struct file *f)
 {
-  printk(KERN_INFO "%s\n", __func__);
   return 0;
 }
 
@@ -150,8 +149,9 @@ static int ksocket_receive(struct socket* sock, struct sockaddr_in* addr, unsign
   if (sock->sk==NULL) return 0;
 
   cbuf = kmalloc(500, GFP_USER);
-  if ( cbuf < 0 ) {
+  if ( cbuf == NULL ) {
     printk(KERN_ERR MODULE_NAME " failed to alloc mem for cbuf\n");
+    return 0;
   }
 
   iov.iov_base = buf;
@@ -213,8 +213,9 @@ static int ksocket_send(struct socket* sock, struct sockaddr_in* addr, unsigned 
   if (sock->sk==NULL) return 0;
 
   cbuf = kmalloc(500, GFP_USER);
-  if ( cbuf < 0 ) {
+  if ( cbuf == NULL ) {
     printk(KERN_ERR MODULE_NAME " failed to alloc mem for cbuf\n");
+    return 0;
   }
 
   iov.iov_base = buf;
@@ -254,6 +255,11 @@ static int ksocket_send(struct socket* sock, struct sockaddr_in* addr, unsigned 
   kfree(cbuf);
 
   return sent_bytes;
+}
+
+static void client(void)
+{
+  /* TODO: maybe */
 }
 
 static void server(void)
@@ -337,7 +343,7 @@ static void server(void)
       printk(KERN_INFO MODULE_NAME ": Failed to accept (%d)\n", err);
     } else {
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 17, 0)
-      // lenght is returned from now on instead
+      // length is returned from now on instead
       client_ip_len = new_socket->ops->getname(new_socket, &client_ip, 2);
 #else
       new_socket->ops->getname(new_socket, &client_ip, &client_ip_len, 2);
@@ -433,27 +439,36 @@ int init_module(void)
   /* Allocate kernel thread */
   kthread_server = kmalloc(sizeof(struct kthread_t), GFP_KERNEL);
 
-  if ( kthread_server < 0 ) {
+  if ( kthread_server == NULL ) {
     printk(KERN_ERR MODULE_NAME ": Failed to allocate space for kthread. Will quit.");
+    return -ENOMEM;
+  }
+
+  kthread_client = kmalloc(sizeof(struct kthread_t), GFP_KERNEL);
+
+  if ( kthread_client == NULL ) {
+    printk(KERN_ERR MODULE_NAME ": Failed to allocate space for kthread. Will quit.");
+    kfree(kthread_server);
     return -ENOMEM;
   }
 
   /* Initalize memory for the message buffers */
   rx_buffer = kmalloc(sizeof(inet_message_t)*RX_BUFFER_SIZE, GFP_KERNEL);
 
-  if ( rx_buffer < 0 ) {
+  if ( rx_buffer == NULL ) {
     printk(KERN_ERR MODULE_NAME ": Failed to allocate space for rx buffer. Will quit.");
-
+    kfree(kthread_client);
     kfree(kthread_server);
     return -ENOMEM;
   }
 
   tx_buffer = kmalloc(sizeof(inet_message_t)*TX_BUFFER_SIZE, GFP_KERNEL);
 
-  if ( tx_buffer < 0 ) {
+  if ( tx_buffer == NULL ) {
     printk(KERN_ERR MODULE_NAME ": Failed to allocate space for tx buffer. Will quit.");
     
     kfree(rx_buffer);
+    kfree(kthread_client);
     kfree(kthread_server);
     return -ENOMEM;
   }
@@ -468,8 +483,24 @@ int init_module(void)
 
   if (IS_ERR(kthread_server->thread)) 
   {
-    printk(KERN_INFO MODULE_NAME ": unable to start kernel thread\n");
+    printk(KERN_INFO MODULE_NAME ": unable to start server kernel thread\n");
     kfree(kthread_server);
+    kthread_server = NULL;
+    return -ENOMEM;
+  }
+
+  memset(kthread_client, 0, sizeof(struct kthread_t));
+
+  /* Configure kthread to be an echo server */
+  kthread_client->mode |= ECHO_SERVER;
+
+  /* start kernel thread */
+  kthread_client->thread = kthread_run((void *)client, NULL, MODULE_NAME);
+
+  if (IS_ERR(kthread_client->thread)) 
+  {
+    printk(KERN_INFO MODULE_NAME ": unable to start client kernel thread\n");
+    kfree(kthread_client);
     kthread_server = NULL;
     return -ENOMEM;
   }
@@ -499,6 +530,19 @@ void cleanup_module(void)
     // Free the memory of the threads
     kfree(kthread_server);
   }
+
+  if ( kthread_client != NULL ) {
+    if ( kthread_client->mode & RUNNING ) {
+      ret = kthread_stop(kthread_client->thread);
+      if(!ret) {
+        printk(KERN_INFO "kthread stopped");
+      }
+    }
+
+    // Free the memory of the threads
+    kfree(kthread_client);
+  }
+
 
   // Free the memory of the buffers
   if ( rx_buffer != NULL )
